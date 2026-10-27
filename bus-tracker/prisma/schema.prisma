@@ -1,0 +1,202 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum BusStatus {
+  ACTIVE
+  INACTIVE
+  DELAYED
+  STOPPED
+  OFFLINE
+}
+
+enum TripStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum UserRole {
+  PASSENGER
+  DRIVER
+  ADMIN
+}
+
+enum OccupancyStatus {
+  SEATS_AVAILABLE
+  STANDING_ONLY
+  CROWDED
+}
+
+enum TicketStatus {
+  ACTIVE
+  USED
+  EXPIRED
+}
+
+// --- USER & AUTH ---
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  phone        String?
+  passwordHash String
+  role         UserRole @default(PASSENGER)
+  createdAt    DateTime @default(now())
+
+  tickets Ticket[]
+
+  @@map("users")
+}
+
+// --- STATIC DATA ---
+
+model Route {
+  id             String   @id @default(cuid())
+  number         String   @unique
+  name           String
+  origin         String
+  destination    String
+  distanceKm     Float    @default(32.5)
+  averageTimeMin Int      @default(45)
+  fareRs         Float    @default(25.0)
+  operatingHours String   @default("05:00 AM - 10:30 PM")
+  frequency      String   @default("Every 15 mins")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  stops   RouteStop[]
+  buses   Bus[]
+  trips   Trip[]
+  tickets Ticket[]
+
+  @@map("routes")
+}
+
+model BusStop {
+  id          String   @id @default(cuid())
+  name        String
+  latitude    Float
+  longitude   Float
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  routes         RouteStop[]
+  originTickets  Ticket[]    @relation("FromStop")
+  destTickets    Ticket[]    @relation("ToStop")
+
+  @@index([latitude, longitude])
+  @@map("bus_stops")
+}
+
+model RouteStop {
+  id       String  @id @default(cuid())
+  routeId  String
+  stopId   String
+  sequence Int
+
+  route Route   @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  stop  BusStop @relation(fields: [stopId], references: [id], onDelete: Cascade)
+
+  @@unique([routeId, sequence])
+  @@unique([routeId, stopId])
+  @@map("route_stops")
+}
+
+model Driver {
+  id            String   @id @default(cuid())
+  name          String
+  phone         String   @unique
+  badgeNumber   String   @unique
+  licenseNumber String?
+  passwordHash  String
+  createdAt     DateTime @default(now())
+
+  trips Trip[]
+
+  @@map("drivers")
+}
+
+model Bus {
+  id                 String          @id @default(cuid())
+  busNumber          String          @unique
+  registrationNumber String          @unique
+  routeId            String?
+  status             BusStatus       @default(OFFLINE)
+  occupancy          OccupancyStatus @default(SEATS_AVAILABLE)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  route Route? @relation(fields: [routeId], references: [id])
+  trips Trip[]
+
+  @@map("buses")
+}
+
+// --- REAL-TIME DATA & TICKETS ---
+
+model Trip {
+  id        String     @id @default(cuid())
+  busId     String
+  routeId   String
+  driverId  String?
+  status    TripStatus @default(SCHEDULED)
+  startedAt DateTime?
+  endedAt   DateTime?
+  createdAt DateTime   @default(now())
+
+  bus       Bus           @relation(fields: [busId], references: [id])
+  route     Route         @relation(fields: [routeId], references: [id])
+  driver    Driver?       @relation(fields: [driverId], references: [id])
+  locations BusLocation[]
+
+  @@index([status])
+  @@map("trips")
+}
+
+model BusLocation {
+  id         String          @id @default(cuid())
+  tripId     String
+  busId      String
+  latitude   Float
+  longitude  Float
+  speed      Float?
+  heading    Float?
+  occupancy  OccupancyStatus @default(SEATS_AVAILABLE)
+  recordedAt DateTime
+  receivedAt DateTime        @default(now())
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tripId, recordedAt])
+  @@index([busId, recordedAt])
+  @@map("bus_locations")
+}
+
+model Ticket {
+  id           String       @id @default(cuid())
+  ticketNumber String       @unique
+  userId       String?
+  routeId      String
+  fromStopId   String
+  toStopId     String
+  fare         Float
+  status       TicketStatus @default(ACTIVE)
+  validUntil   DateTime
+  createdAt    DateTime     @default(now())
+
+  user     User?   @relation(fields: [userId], references: [id])
+  route    Route   @relation(fields: [routeId], references: [id])
+  fromStop BusStop @relation("FromStop", fields: [fromStopId], references: [id])
+  toStop   BusStop @relation("ToStop", fields: [toStopId], references: [id])
+
+  @@map("tickets")
+}
